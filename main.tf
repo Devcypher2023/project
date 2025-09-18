@@ -47,18 +47,13 @@ resource "aws_s3_bucket_ownership_controls" "frontend" {
 resource "aws_s3_bucket_public_access_block" "frontend" {
   bucket                  = aws_s3_bucket.frontend.id
   block_public_acls       = false
-  block_public_policy     = false
+  block_public_policy     = false  # ensure bucket can have public policy
   ignore_public_acls      = false
   restrict_public_buckets = false
 }
 
-# Conditional S3 bucket policy only if public policies allowed
-data "aws_s3_bucket_public_access_block" "check" {
-  bucket = aws_s3_bucket.frontend.id
-}
-
+# Only create policy if public policies are allowed
 resource "aws_s3_bucket_policy" "frontend" {
-  count  = data.aws_s3_bucket_public_access_block.check.block_public_policy ? 0 : 1
   bucket = aws_s3_bucket.frontend.id
   policy = jsonencode({
     Version = "2012-10-17",
@@ -71,6 +66,7 @@ resource "aws_s3_bucket_policy" "frontend" {
     }]
   })
 }
+
 
 # Upload frontend files to S3
 resource "aws_s3_object" "frontend_files" {
