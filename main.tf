@@ -4,6 +4,10 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.5"
+    }
   }
 
   required_version = ">= 1.5.0"
@@ -14,9 +18,10 @@ provider "aws" {
 }
 
 # -----------------------------
-# S3 Bucket for Static Website
+# Use existing S3 Bucket
 # -----------------------------
 resource "aws_s3_bucket" "frontend" {
+  # Use the existing bucket name
   bucket = "luffy-utrains-5000e"
 }
 
@@ -182,5 +187,3 @@ resource "aws_apigatewayv2_stage" "default" {
   name        = "$default"
   auto_deploy = true
 }
-
-
