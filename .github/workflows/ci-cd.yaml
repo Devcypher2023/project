@@ -2,7 +2,7 @@ name: Deploy to AWS
 
 on:
   push:
-    branches: [ "main" ]
+    branches: ["main"]
 
 permissions:
   id-token: write
@@ -31,11 +31,30 @@ jobs:
       - name: Terraform Init
         run: terraform init -input=false
 
-      - name: Make pre-import script executable
-        run: chmod +x ./scripts/pre_import.sh
+      - name: Pre-import existing resources
+        run: |
+          set -e
 
-      - name: Run pre-import
-        run: ./scripts/pre_import.sh
+          echo "Checking S3 bucket..."
+          BUCKET_NAME="luffy-utrains-5000e"
+          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
+            echo "✅ Bucket exists. Importing into Terraform state..."
+            terraform import aws_s3_bucket.frontend "$BUCKET_NAME" || echo "Already imported."
+          fi
+
+          echo "Checking DynamoDB table..."
+          TABLE_NAME="userserverless"
+          if aws dynamodb describe-table --table-name "$TABLE_NAME" 2>/dev/null; then
+            echo "✅ Table exists. Importing into Terraform state..."
+            terraform import aws_dynamodb_table.users "$TABLE_NAME" || echo "Already imported."
+          fi
+
+          echo "Checking IAM Role..."
+          ROLE_NAME="lambda_exec_role"
+          if aws iam get-role --role-name "$ROLE_NAME" 2>/dev/null; then
+            echo "✅ IAM Role exists. Importing into Terraform state..."
+            terraform import aws_iam_role.lambda_exec "$ROLE_NAME" || echo "Already imported."
+          fi
 
       - name: Terraform Plan
         run: terraform plan -input=false
@@ -50,5 +69,4 @@ jobs:
           )
 
       - name: Sync Files to S3
-        run: |
-          aws s3 sync ./s3_files "s3://luffy-utrains-5000e" --delete
+        run: aws s3 sync ./s3_files "s3://luffy-utrains-5000e" --delete
