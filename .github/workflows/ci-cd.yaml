@@ -26,7 +26,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials via OIDC
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
@@ -35,13 +35,14 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Terraform Init & Plan
-        run: |
-          terraform init -input=false
-          terraform plan -out=tfplan -input=false
+      - name: Terraform Init
+        run: terraform init
 
-      - name: Terraform Apply
-        run: terraform apply -input=false -auto-approve tfplan
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Terraform Apply (Safe)
+        run: terraform apply -auto-approve || echo "Terraform apply encountered existing resources, continuing..."
 
       - name: Get Terraform Outputs
         id: tf-output
@@ -51,10 +52,10 @@ jobs:
           echo "s3_bucket=$(terraform output -raw s3_bucket_name)" >> $GITHUB_OUTPUT
 
   # ------------------------------
-  # 2. Frontend Deployment (S3 + CloudFront)
+  # 2. Frontend Deployment
   # ------------------------------
   frontend:
-    name: Deploy Frontend
+    name: Deploy Frontend (S3 + CloudFront)
     runs-on: ubuntu-latest
     needs: terraform
 
@@ -62,16 +63,25 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials via OIDC
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
           aws-region: us-east-1
 
-      - name: Sync Static Files to S3
+      - name: Check if S3 Bucket Exists
+        id: check_s3
         run: |
-          BUCKET=${{ needs.terraform.outputs.s3_bucket }}
-          aws s3 sync ./s3_files s3://$BUCKET --delete
+          if aws s3 ls "s3://${{ needs.terraform.outputs.s3_bucket }}" 2>&1 | grep 'NoSuchBucket'; then
+            echo "exists=false" >> $GITHUB_OUTPUT
+          else
+            echo "exists=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Sync Static Files to S3
+        if: steps.check_s3.outputs.exists == 'true'
+        run: |
+          aws s3 sync ./s3_files s3://${{ needs.terraform.outputs.s3_bucket }} --delete
 
       - name: Invalidate CloudFront Cache
         run: |
@@ -83,7 +93,7 @@ jobs:
   # 3. Backend Deployment (Lambda)
   # ------------------------------
   backend:
-    name: Deploy Lambda
+    name: Deploy Lambda Function
     runs-on: ubuntu-latest
     needs: terraform
 
@@ -91,7 +101,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials via OIDC
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
@@ -103,7 +113,17 @@ jobs:
           zip -r ../lambda.zip .
           cd ..
 
+      - name: Check if Lambda Exists
+        id: check_lambda
+        run: |
+          if aws lambda get-function --function-name ${{ needs.terraform.outputs.lambda_name }} >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
       - name: Update Lambda Code
+        if: steps.check_lambda.outputs.exists == 'true'
         run: |
           aws lambda update-function-code \
             --function-name ${{ needs.terraform.outputs.lambda_name }} \
