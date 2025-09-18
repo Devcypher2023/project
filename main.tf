@@ -1,3 +1,7 @@
+###############################################
+# main.tf – Clean, Deduplicated, Robust
+###############################################
+
 terraform {
   required_providers {
     aws = {
@@ -15,12 +19,6 @@ provider "aws" {
 # -----------------------------
 # S3 Bucket for Static Website
 # -----------------------------
-variable "s3_bucket_name" {
-  description = "Base name for the S3 bucket"
-  type        = string
-  default     = "luffy-utrains-5000e"
-}
-
 resource "aws_s3_bucket" "frontend" {
   bucket        = var.s3_bucket_name
   force_destroy = true
@@ -33,13 +31,13 @@ resource "aws_s3_bucket" "frontend" {
 
   lifecycle {
     prevent_destroy = true
-    # Ensures Terraform ignores changes to tags you might manually add in console
-    ignore_changes = [tags]
+    ignore_changes  = [tags] # Prevent drift on manually added tags
   }
 }
 
 resource "aws_s3_bucket_versioning" "frontend_versioning" {
   bucket = aws_s3_bucket.frontend.id
+
   versioning_configuration {
     status = "Enabled"
   }
@@ -112,9 +110,6 @@ resource "aws_s3_object" "frontend_files" {
   )
 }
 
-output "s3_bucket_name" {
-  value = aws_s3_bucket.frontend.id
-}
 # -----------------------------
 # DynamoDB Table
 # -----------------------------
@@ -123,16 +118,12 @@ resource "aws_dynamodb_table" "users" {
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "id"
 
- attribute {
-  name = "id"
-  type = "S"
-}
-
+  attribute {
+    name = "id"
+    type = "S"
+  }
 
   lifecycle { prevent_destroy = true }
-
-  # Import existing table if present:
-  # terraform import aws_dynamodb_table.users userserverless
 }
 
 # -----------------------------
@@ -140,6 +131,7 @@ resource "aws_dynamodb_table" "users" {
 # -----------------------------
 resource "aws_iam_role" "lambda_exec" {
   name = "lambda_exec_role"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
@@ -148,10 +140,8 @@ resource "aws_iam_role" "lambda_exec" {
       Effect    = "Allow"
     }]
   })
-  lifecycle { prevent_destroy = true }
 
-  # Import existing role:
-  # terraform import aws_iam_role.lambda_exec lambda_exec_role
+  lifecycle { prevent_destroy = true }
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_basic" {
@@ -181,12 +171,13 @@ resource "aws_lambda_function" "backend" {
   filename         = data.archive_file.lambda_zip.output_path
   source_code_hash = filebase64sha256(data.archive_file.lambda_zip.output_path)
 
-  environment { variables = { DYNAMODB_TABLE = aws_dynamodb_table.users.name } }
+  environment {
+    variables = {
+      DYNAMODB_TABLE = aws_dynamodb_table.users.name
+    }
+  }
 
   lifecycle { prevent_destroy = true }
-
-  # Import existing lambda if present:
-  # terraform import aws_lambda_function.backend userserverless-lambda
 }
 
 # -----------------------------

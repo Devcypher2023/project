@@ -31,26 +31,18 @@ jobs:
       - name: Terraform Init
         run: terraform init -input=false
 
-      - name: Check and Import Pre-existing Resources
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+
+      - name: Terraform Validate
+        run: terraform validate
+
+      - name: Run Pre-Import Sanity Check
         run: |
-          BUCKET_NAME="luffy-utrains-5000e"
-          echo "Checking S3 bucket: $BUCKET_NAME..."
-          if aws s3api head-bucket --bucket "$BUCKET_NAME" 2>/dev/null; then
-            echo "✅ Bucket exists. Importing into state..."
-            terraform import aws_s3_bucket.frontend "$BUCKET_NAME" || echo "Already imported."
-          fi
-
-          echo "Checking DynamoDB table: userserverless..."
-          if aws dynamodb describe-table --table-name "userserverless" 2>/dev/null; then
-            echo "✅ Table exists. Importing..."
-            terraform import aws_dynamodb_table.users "userserverless" || echo "Already imported."
-          fi
-
-          echo "Checking IAM Role: lambda_exec_role..."
-          if aws iam get-role --role-name lambda_exec_role 2>/dev/null; then
-            echo "✅ IAM Role exists. Importing..."
-            terraform import aws_iam_role.lambda_exec "lambda_exec_role" || echo "Already imported."
-          fi
+          export S3_BUCKET_NAME="luffy-utrains-5000e"
+          export DYNAMODB_TABLE_NAME="userserverless"
+          export LAMBDA_FUNCTION_NAME="userserverless-lambda"
+          ./scripts/pre_import.sh
 
       - name: Terraform Plan
         run: terraform plan -input=false
