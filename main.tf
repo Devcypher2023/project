@@ -97,9 +97,7 @@ resource "aws_s3_object" "frontend_files" {
   )
 }
 
-output "s3_bucket_name" {
-  value = aws_s3_bucket.frontend.id
-}
+
 
 # -----------------------------
 # DynamoDB Table
@@ -119,9 +117,7 @@ resource "aws_dynamodb_table" "users" {
   }
 }
 
-output "dynamodb_table_name" {
-  value = aws_dynamodb_table.users.name
-}
+
 
 # -----------------------------
 # IAM Role for Lambda
@@ -175,9 +171,7 @@ resource "aws_lambda_function" "backend" {
   lifecycle { prevent_destroy = true }
 }
 
-output "lambda_function_name" {
-  value = aws_lambda_function.backend.function_name
-}
+
 
 # -----------------------------
 # API Gateway
