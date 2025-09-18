@@ -15,23 +15,53 @@ provider "aws" {
 # -----------------------------
 # S3 Bucket for Static Website
 # -----------------------------
-resource "aws_s3_bucket" "frontend" {
-  bucket = var.s3_bucket_name
-  lifecycle { prevent_destroy = true }
+variable "s3_bucket_name" {
+  description = "Base name for the S3 bucket"
+  type        = string
+  default     = "luffy-utrains-5000e"
+}
 
-  # If bucket exists, import first:
-  # terraform import aws_s3_bucket.frontend luffy-utrains-5000e
+resource "aws_s3_bucket" "frontend" {
+  bucket        = var.s3_bucket_name
+  force_destroy = true
+
+  tags = {
+    Name        = "frontend"
+    Environment = terraform.workspace
+    ManagedBy   = "Terraform"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+    # Ensures Terraform ignores changes to tags you might manually add in console
+    ignore_changes = [tags]
+  }
+}
+
+resource "aws_s3_bucket_versioning" "frontend_versioning" {
+  bucket = aws_s3_bucket.frontend.id
+  versioning_configuration {
+    status = "Enabled"
+  }
 }
 
 resource "aws_s3_bucket_website_configuration" "frontend" {
   bucket = aws_s3_bucket.frontend.id
-  index_document { suffix = "index.html" }
-  error_document { key = "index.html" }
+
+  index_document {
+    suffix = "index.html"
+  }
+
+  error_document {
+    key = "index.html"
+  }
 }
 
 resource "aws_s3_bucket_ownership_controls" "frontend" {
   bucket = aws_s3_bucket.frontend.id
-  rule { object_ownership = "BucketOwnerPreferred" }
+  rule {
+    object_ownership = "BucketOwnerPreferred"
+  }
 }
 
 resource "aws_s3_bucket_public_access_block" "frontend" {
@@ -56,8 +86,10 @@ resource "aws_s3_bucket_policy" "frontend" {
   })
 }
 
+# Upload frontend files to S3
 resource "aws_s3_object" "frontend_files" {
   for_each = fileset("${path.module}/s3_files", "*")
+
   bucket       = aws_s3_bucket.frontend.id
   key          = each.value
   source       = "${path.module}/s3_files/${each.value}"
@@ -66,13 +98,23 @@ resource "aws_s3_object" "frontend_files" {
     {
       "html" = "text/html",
       "css"  = "text/css",
-      "js"   = "application/javascript"
+      "js"   = "application/javascript",
+      "png"  = "image/png",
+      "jpg"  = "image/jpeg",
+      "jpeg" = "image/jpeg",
+      "gif"  = "image/gif",
+      "svg"  = "image/svg+xml",
+      "json" = "application/json",
+      "ico"  = "image/x-icon"
     },
     split(".", each.value)[length(split(".", each.value)) - 1],
     "text/plain"
   )
 }
 
+output "s3_bucket_name" {
+  value = aws_s3_bucket.frontend.id
+}
 # -----------------------------
 # DynamoDB Table
 # -----------------------------
