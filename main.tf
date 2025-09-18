@@ -13,14 +13,49 @@ provider "aws" {
 }
 
 # -----------------------------
+# Variables
+# -----------------------------
+variable "aws_region" {
+  description = "AWS region to deploy resources"
+  type        = string
+  default     = "us-east-1"
+}
+
+variable "s3_bucket_name" {
+  description = "Base name for the S3 bucket"
+  type        = string
+  default     = "luffy-utrains-5000e"
+}
+
+variable "lambda_function_name" {
+  description = "Name of the Lambda function"
+  type        = string
+  default     = "userserverless-lambda"
+}
+
+variable "dynamodb_table_name" {
+  description = "Name of the DynamoDB table"
+  type        = string
+  default     = "userserverless"
+}
+
+# -----------------------------
 # S3 Bucket for Static Website
 # -----------------------------
 resource "aws_s3_bucket" "frontend" {
   bucket = var.s3_bucket_name
-  lifecycle { prevent_destroy = true }
+  force_destroy = true
 
-  # If bucket exists, import first:
-  # terraform import aws_s3_bucket.frontend luffy-utrains-5000e
+  tags = {
+    Name        = "frontend"
+    Environment = terraform.workspace
+    ManagedBy   = "Terraform"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes = [tags]
+  }
 }
 
 resource "aws_s3_bucket_website_configuration" "frontend" {
@@ -42,7 +77,13 @@ resource "aws_s3_bucket_public_access_block" "frontend" {
   restrict_public_buckets = false
 }
 
+# Conditional S3 bucket policy only if public policies allowed
+data "aws_s3_bucket_public_access_block" "check" {
+  bucket = aws_s3_bucket.frontend.id
+}
+
 resource "aws_s3_bucket_policy" "frontend" {
+  count  = data.aws_s3_bucket_public_access_block.check.block_public_policy ? 0 : 1
   bucket = aws_s3_bucket.frontend.id
   policy = jsonencode({
     Version = "2012-10-17",
@@ -56,6 +97,7 @@ resource "aws_s3_bucket_policy" "frontend" {
   })
 }
 
+# Upload frontend files to S3
 resource "aws_s3_object" "frontend_files" {
   for_each = fileset("${path.module}/s3_files", "*")
   bucket       = aws_s3_bucket.frontend.id
@@ -66,11 +108,22 @@ resource "aws_s3_object" "frontend_files" {
     {
       "html" = "text/html",
       "css"  = "text/css",
-      "js"   = "application/javascript"
+      "js"   = "application/javascript",
+      "png"  = "image/png",
+      "jpg"  = "image/jpeg",
+      "jpeg" = "image/jpeg",
+      "gif"  = "image/gif",
+      "svg"  = "image/svg+xml",
+      "json" = "application/json",
+      "ico"  = "image/x-icon"
     },
     split(".", each.value)[length(split(".", each.value)) - 1],
     "text/plain"
   )
+}
+
+output "s3_bucket_name" {
+  value = aws_s3_bucket.frontend.id
 }
 
 # -----------------------------
@@ -82,15 +135,17 @@ resource "aws_dynamodb_table" "users" {
   hash_key     = "id"
 
   attribute {
-  name = "id"
-  type = "S"
+    name = "id"
+    type = "S"
+  }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
-
-  lifecycle { prevent_destroy = true }
-
-  # Import existing table if present:
-  # terraform import aws_dynamodb_table.users userserverless
+output "dynamodb_table_name" {
+  value = aws_dynamodb_table.users.name
 }
 
 # -----------------------------
@@ -98,18 +153,17 @@ resource "aws_dynamodb_table" "users" {
 # -----------------------------
 resource "aws_iam_role" "lambda_exec" {
   name = "lambda_exec_role"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Action    = "sts:AssumeRole",
-      Principal = { Service = "lambda.amazonaws.com" },
+      Action    = "sts:AssumeRole"
+      Principal = { Service = "lambda.amazonaws.com" }
       Effect    = "Allow"
     }]
   })
-  lifecycle { prevent_destroy = true }
 
-  # Import existing role:
-  # terraform import aws_iam_role.lambda_exec lambda_exec_role
+  lifecycle { prevent_destroy = true }
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_basic" {
@@ -139,12 +193,15 @@ resource "aws_lambda_function" "backend" {
   filename         = data.archive_file.lambda_zip.output_path
   source_code_hash = filebase64sha256(data.archive_file.lambda_zip.output_path)
 
-  environment { variables = { DYNAMODB_TABLE = aws_dynamodb_table.users.name } }
+  environment {
+    variables = { DYNAMODB_TABLE = aws_dynamodb_table.users.name }
+  }
 
   lifecycle { prevent_destroy = true }
+}
 
-  # Import existing lambda if present:
-  # terraform import aws_lambda_function.backend userserverless-lambda
+output "lambda_function_name" {
+  value = aws_lambda_function.backend.function_name
 }
 
 # -----------------------------
