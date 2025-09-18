@@ -10,109 +10,67 @@ permissions:
   contents: read
 
 jobs:
-  # ------------------------------
-  # 1. Terraform Infrastructure
-  # ------------------------------
   terraform:
     name: Provision Infrastructure
     runs-on: ubuntu-latest
 
     outputs:
-      website_url: ${{ steps.tf-output.outputs.website_url }}
-      api_gateway_url: ${{ steps.tf-output.outputs.api_gateway_url }}
-      lambda_name: ${{ steps.tf-output.outputs.lambda_function_name }}
-      dynamodb_table: ${{ steps.tf-output.outputs.dynamodb_table_name }}
-      s3_bucket: ${{ steps.tf-output.outputs.s3_bucket_name }}
+      s3_bucket: ${{ steps.tf-output.outputs.s3_bucket }}
+      lambda_name: ${{ steps.tf-output.outputs.lambda_name }}
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
           aws-region: us-east-1
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v3
 
-      - name: Terraform Init
-        run: terraform init -input=false
+      - run: terraform init
+      - run: terraform validate
+      - run: terraform apply -auto-approve
 
-      - name: Terraform Validate
-        run: terraform validate
-
-      - name: Terraform Apply
-        run: terraform apply -auto-approve
-
-      - name: Get Terraform Outputs
-        id: tf-output
+      - id: tf-output
         run: |
-          echo "website_url=$(terraform output -raw website_url)" >> $GITHUB_OUTPUT
-          echo "api_gateway_url=$(terraform output -raw api_gateway_url)" >> $GITHUB_OUTPUT
-          echo "lambda_function_name=$(terraform output -raw lambda_function_name)" >> $GITHUB_OUTPUT
-          echo "dynamodb_table_name=$(terraform output -raw dynamodb_table_name)" >> $GITHUB_OUTPUT
-          echo "s3_bucket_name=$(terraform output -raw s3_bucket_name)" >> $GITHUB_OUTPUT
+          echo "s3_bucket=$(terraform output -raw s3_bucket_name)" >> $GITHUB_OUTPUT
+          echo "lambda_name=$(terraform output -raw lambda_function_name)" >> $GITHUB_OUTPUT
 
-  # ------------------------------
-  # 2. Frontend Deployment (S3)
-  # ------------------------------
   frontend:
-    name: Deploy Frontend (S3)
+    name: Deploy Frontend
     runs-on: ubuntu-latest
     needs: terraform
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
           aws-region: us-east-1
 
-      - name: Sync Static Files to S3
-        run: |
-          if [ -d "./s3_files" ]; then
-            echo "Syncing static files to S3 bucket..."
-            aws s3 sync ./s3_files s3://${{ needs.terraform.outputs.s3_bucket }} --delete
-          else
-            echo "No static files found in ./s3_files"
-          fi
+      - run: |
+          BUCKET=${{ needs.terraform.outputs.s3_bucket }}
+          aws s3 sync ./s3_files s3://$BUCKET --delete
 
-  # ------------------------------
-  # 3. Backend Deployment (Lambda)
-  # ------------------------------
   backend:
-    name: Deploy Lambda Function
+    name: Deploy Lambda
     runs-on: ubuntu-latest
     needs: terraform
 
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
-        uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
           aws-region: us-east-1
 
-      - name: Package Lambda
-        run: |
-          if [ -d "./lambda" ]; then
-            cd lambda
-            zip -r ../lambda.zip .
-            cd ..
-          else
-            echo "No Lambda code found in ./lambda"
-            exit 1
-          fi
-
-      - name: Update Lambda Code
-        run: |
+      - run: |
+          cd lambda
+          zip -r ../lambda.zip .
+          cd ..
           aws lambda update-function-code \
             --function-name ${{ needs.terraform.outputs.lambda_name }} \
             --zip-file fileb://lambda.zip
