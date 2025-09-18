@@ -12,29 +12,21 @@ provider "aws" {
   region = var.aws_region
 }
 
-
-
 # -----------------------------
 # S3 Bucket for Static Website
 # -----------------------------
 resource "aws_s3_bucket" "frontend" {
   bucket = var.s3_bucket_name
-  force_destroy = true
-
-  tags = {
-    Name        = "frontend"
-    Environment = terraform.workspace
-    ManagedBy   = "Terraform"
-  }
 
   lifecycle {
     prevent_destroy = true
-    ignore_changes = [tags]
+    ignore_changes  = [tags]
   }
 }
 
 resource "aws_s3_bucket_website_configuration" "frontend" {
   bucket = aws_s3_bucket.frontend.id
+
   index_document { suffix = "index.html" }
   error_document { key = "index.html" }
 }
@@ -47,53 +39,53 @@ resource "aws_s3_bucket_ownership_controls" "frontend" {
 resource "aws_s3_bucket_public_access_block" "frontend" {
   bucket                  = aws_s3_bucket.frontend.id
   block_public_acls       = false
-  block_public_policy     = false  # ensure bucket can have public policy
+  block_public_policy     = false
   ignore_public_acls      = false
   restrict_public_buckets = false
 }
 
-# Only create policy if public policies are allowed
 resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
-      Sid       = "PublicReadGetObject",
-      Effect    = "Allow",
-      Principal = "*",
-      Action    = ["s3:GetObject"],
+      Sid       = "PublicReadGetObject"
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = ["s3:GetObject"]
       Resource  = "${aws_s3_bucket.frontend.arn}/*"
     }]
   })
+
+  lifecycle {
+    ignore_changes = [policy]
+  }
 }
 
-
-# Upload frontend files to S3
 resource "aws_s3_object" "frontend_files" {
   for_each = fileset("${path.module}/s3_files", "*")
+
   bucket       = aws_s3_bucket.frontend.id
   key          = each.value
   source       = "${path.module}/s3_files/${each.value}"
   etag         = filemd5("${path.module}/s3_files/${each.value}")
   content_type = lookup(
     {
-      "html" = "text/html",
-      "css"  = "text/css",
-      "js"   = "application/javascript",
-      "png"  = "image/png",
-      "jpg"  = "image/jpeg",
-      "jpeg" = "image/jpeg",
-      "gif"  = "image/gif",
-      "svg"  = "image/svg+xml",
-      "json" = "application/json",
+      "html" = "text/html"
+      "css"  = "text/css"
+      "js"   = "application/javascript"
+      "png"  = "image/png"
+      "jpg"  = "image/jpeg"
+      "jpeg" = "image/jpeg"
+      "gif"  = "image/gif"
+      "svg"  = "image/svg+xml"
+      "json" = "application/json"
       "ico"  = "image/x-icon"
     },
     split(".", each.value)[length(split(".", each.value)) - 1],
     "text/plain"
   )
 }
-
-
 
 # -----------------------------
 # DynamoDB Table
@@ -113,14 +105,11 @@ resource "aws_dynamodb_table" "users" {
   }
 }
 
-
-
 # -----------------------------
 # IAM Role for Lambda
 # -----------------------------
 resource "aws_iam_role" "lambda_exec" {
   name = "lambda_exec_role"
-
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
@@ -164,10 +153,11 @@ resource "aws_lambda_function" "backend" {
     variables = { DYNAMODB_TABLE = aws_dynamodb_table.users.name }
   }
 
-  lifecycle { prevent_destroy = true }
+  lifecycle {
+    prevent_destroy = true
+    ignore_changes  = [filename, source_code_hash]
+  }
 }
-
-
 
 # -----------------------------
 # API Gateway

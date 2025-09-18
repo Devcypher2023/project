@@ -33,33 +33,34 @@ jobs:
       - name: Terraform Init
         run: terraform init -input=false
 
-      - name: Pre-import existing resources
-        run: |
-          set -e
-
-          # Import S3 bucket if it exists
-          BUCKET="luffy-utrains-5000e"
-          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
-            echo "✅ Bucket exists. Importing into Terraform state..."
-            terraform import aws_s3_bucket.frontend "$BUCKET" || echo "Already imported."
-          fi
-
-          # Import DynamoDB table if it exists
-          TABLE="userserverless"
-          if aws dynamodb describe-table --table-name "$TABLE" 2>/dev/null; then
-            echo "✅ Table exists. Importing into Terraform state..."
-            terraform import aws_dynamodb_table.users "$TABLE" || echo "Already imported."
-          fi
-
-          # Import IAM role if it exists
-          ROLE="lambda_exec_role"
-          if aws iam get-role --role-name "$ROLE" 2>/dev/null; then
-            echo "✅ IAM Role exists. Importing into Terraform state..."
-            terraform import aws_iam_role.lambda_exec "$ROLE" || echo "Already imported."
-          fi
-
       - name: Terraform Validate
         run: terraform validate
+
+      - name: Import Existing Resources
+        run: |
+          echo "Checking S3 bucket..."
+          if aws s3api head-bucket --bucket ${{ vars.s3_bucket_name }} 2>/dev/null; then
+            echo "S3 bucket exists. Importing..."
+            terraform import aws_s3_bucket.frontend "${{ vars.s3_bucket_name }}" || echo "Already imported"
+          fi
+
+          echo "Checking DynamoDB table..."
+          if aws dynamodb describe-table --table-name ${{ vars.dynamodb_table_name }} 2>/dev/null; then
+            echo "DynamoDB table exists. Importing..."
+            terraform import aws_dynamodb_table.users "${{ vars.dynamodb_table_name }}" || echo "Already imported"
+          fi
+
+          echo "Checking IAM role..."
+          if aws iam get-role --role-name lambda_exec_role 2>/dev/null; then
+            echo "IAM role exists. Importing..."
+            terraform import aws_iam_role.lambda_exec "lambda_exec_role" || echo "Already imported"
+          fi
+
+          echo "Checking Lambda function..."
+          if aws lambda get-function --function-name ${{ vars.lambda_function_name }} 2>/dev/null; then
+            echo "Lambda exists. Importing..."
+            terraform import aws_lambda_function.backend "${{ vars.lambda_function_name }}" || echo "Already imported"
+          fi
 
       - name: Terraform Plan
         run: terraform plan -input=false
@@ -85,7 +86,8 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
           aws-region: us-east-1
 
-      - run: |
+      - name: Sync Frontend Files
+        run: |
           BUCKET=${{ needs.terraform.outputs.s3_bucket }}
           aws s3 sync ./s3_files s3://$BUCKET --delete
 
@@ -102,7 +104,8 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
           aws-region: us-east-1
 
-      - run: |
+      - name: Deploy Lambda Code
+        run: |
           cd lambda
           zip -r ../lambda.zip .
           cd ..
