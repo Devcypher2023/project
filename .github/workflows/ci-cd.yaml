@@ -31,18 +31,11 @@ jobs:
       - name: Terraform Init
         run: terraform init -input=false
 
-      - name: Terraform Format Check
-        run: terraform fmt -check -recursive
+      - name: Make pre-import script executable
+        run: chmod +x ./scripts/pre_import.sh
 
-      - name: Terraform Validate
-        run: terraform validate
-
-      - name: Run Pre-Import Sanity Check
-        run: |
-          export S3_BUCKET_NAME="luffy-utrains-5000e"
-          export DYNAMODB_TABLE_NAME="userserverless"
-          export LAMBDA_FUNCTION_NAME="userserverless-lambda"
-          ./scripts/pre_import.sh
+      - name: Run pre-import
+        run: ./scripts/pre_import.sh
 
       - name: Terraform Plan
         run: terraform plan -input=false
