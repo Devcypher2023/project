@@ -1,7 +1,3 @@
-###############################################
-# main.tf – Clean, Deduplicated, Robust
-###############################################
-
 terraform {
   required_providers {
     aws = {
@@ -20,46 +16,22 @@ provider "aws" {
 # S3 Bucket for Static Website
 # -----------------------------
 resource "aws_s3_bucket" "frontend" {
-  bucket        = var.s3_bucket_name
-  force_destroy = true
+  bucket = var.s3_bucket_name
+  lifecycle { prevent_destroy = true }
 
-  tags = {
-    Name        = "frontend"
-    Environment = terraform.workspace
-    ManagedBy   = "Terraform"
-  }
-
-  lifecycle {
-    prevent_destroy = true
-    ignore_changes  = [tags] # Prevent drift on manually added tags
-  }
-}
-
-resource "aws_s3_bucket_versioning" "frontend_versioning" {
-  bucket = aws_s3_bucket.frontend.id
-
-  versioning_configuration {
-    status = "Enabled"
-  }
+  # If bucket exists, import first:
+  # terraform import aws_s3_bucket.frontend luffy-utrains-5000e
 }
 
 resource "aws_s3_bucket_website_configuration" "frontend" {
   bucket = aws_s3_bucket.frontend.id
-
-  index_document {
-    suffix = "index.html"
-  }
-
-  error_document {
-    key = "index.html"
-  }
+  index_document { suffix = "index.html" }
+  error_document { key = "index.html" }
 }
 
 resource "aws_s3_bucket_ownership_controls" "frontend" {
   bucket = aws_s3_bucket.frontend.id
-  rule {
-    object_ownership = "BucketOwnerPreferred"
-  }
+  rule { object_ownership = "BucketOwnerPreferred" }
 }
 
 resource "aws_s3_bucket_public_access_block" "frontend" {
@@ -84,26 +56,17 @@ resource "aws_s3_bucket_policy" "frontend" {
   })
 }
 
-# Upload frontend files to S3
 resource "aws_s3_object" "frontend_files" {
   for_each = fileset("${path.module}/s3_files", "*")
-
-  bucket = aws_s3_bucket.frontend.id
-  key    = each.value
-  source = "${path.module}/s3_files/${each.value}"
-  etag   = filemd5("${path.module}/s3_files/${each.value}")
+  bucket       = aws_s3_bucket.frontend.id
+  key          = each.value
+  source       = "${path.module}/s3_files/${each.value}"
+  etag         = filemd5("${path.module}/s3_files/${each.value}")
   content_type = lookup(
     {
       "html" = "text/html",
       "css"  = "text/css",
-      "js"   = "application/javascript",
-      "png"  = "image/png",
-      "jpg"  = "image/jpeg",
-      "jpeg" = "image/jpeg",
-      "gif"  = "image/gif",
-      "svg"  = "image/svg+xml",
-      "json" = "application/json",
-      "ico"  = "image/x-icon"
+      "js"   = "application/javascript"
     },
     split(".", each.value)[length(split(".", each.value)) - 1],
     "text/plain"
@@ -119,11 +82,15 @@ resource "aws_dynamodb_table" "users" {
   hash_key     = "id"
 
   attribute {
-    name = "id"
-    type = "S"
-  }
+  name = "id"
+  type = "S"
+}
+
 
   lifecycle { prevent_destroy = true }
+
+  # Import existing table if present:
+  # terraform import aws_dynamodb_table.users userserverless
 }
 
 # -----------------------------
@@ -131,7 +98,6 @@ resource "aws_dynamodb_table" "users" {
 # -----------------------------
 resource "aws_iam_role" "lambda_exec" {
   name = "lambda_exec_role"
-
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
@@ -140,8 +106,10 @@ resource "aws_iam_role" "lambda_exec" {
       Effect    = "Allow"
     }]
   })
-
   lifecycle { prevent_destroy = true }
+
+  # Import existing role:
+  # terraform import aws_iam_role.lambda_exec lambda_exec_role
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_basic" {
@@ -171,13 +139,12 @@ resource "aws_lambda_function" "backend" {
   filename         = data.archive_file.lambda_zip.output_path
   source_code_hash = filebase64sha256(data.archive_file.lambda_zip.output_path)
 
-  environment {
-    variables = {
-      DYNAMODB_TABLE = aws_dynamodb_table.users.name
-    }
-  }
+  environment { variables = { DYNAMODB_TABLE = aws_dynamodb_table.users.name } }
 
   lifecycle { prevent_destroy = true }
+
+  # Import existing lambda if present:
+  # terraform import aws_lambda_function.backend userserverless-lambda
 }
 
 # -----------------------------
