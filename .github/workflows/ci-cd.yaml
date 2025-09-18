@@ -5,10 +5,6 @@ on:
     branches: [ main ]
   workflow_dispatch:
 
-permissions:
-  id-token: write
-  contents: read
-
 jobs:
   # ------------------------------
   # 1. Terraform Infrastructure
@@ -16,17 +12,20 @@ jobs:
   terraform:
     name: Provision Infrastructure
     runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: read
 
     outputs:
       cloudfront_id: ${{ steps.tf-output.outputs.cloudfront_id }}
-      lambda_name: ${{ steps.tf-output.outputs.lambda_name }}
       s3_bucket: ${{ steps.tf-output.outputs.s3_bucket }}
+      lambda_name: ${{ steps.tf-output.outputs.lambda_name }}
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
+      - name: Configure AWS Credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
@@ -35,21 +34,18 @@ jobs:
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
 
-      - name: Terraform Init
-        run: terraform init
-
-      - name: Terraform Validate
-        run: terraform validate
-
-      - name: Terraform Apply (Safe)
-        run: terraform apply -auto-approve || echo "Terraform apply encountered existing resources, continuing..."
+      - name: Terraform Init & Apply
+        run: |
+          terraform init
+          terraform validate
+          terraform apply -auto-approve
 
       - name: Get Terraform Outputs
         id: tf-output
         run: |
           echo "cloudfront_id=$(terraform output -raw cloudfront_distribution_id)" >> $GITHUB_OUTPUT
-          echo "lambda_name=$(terraform output -raw lambda_function_name)" >> $GITHUB_OUTPUT
           echo "s3_bucket=$(terraform output -raw s3_bucket_name)" >> $GITHUB_OUTPUT
+          echo "lambda_name=$(terraform output -raw lambda_function_name)" >> $GITHUB_OUTPUT
 
   # ------------------------------
   # 2. Frontend Deployment
@@ -58,35 +54,32 @@ jobs:
     name: Deploy Frontend (S3 + CloudFront)
     runs-on: ubuntu-latest
     needs: terraform
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
+      - name: Configure AWS Credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
           aws-region: us-east-1
 
-      - name: Check if S3 Bucket Exists
-        id: check_s3
-        run: |
-          if aws s3 ls "s3://${{ needs.terraform.outputs.s3_bucket }}" 2>&1 | grep 'NoSuchBucket'; then
-            echo "exists=false" >> $GITHUB_OUTPUT
-          else
-            echo "exists=true" >> $GITHUB_OUTPUT
-          fi
-
       - name: Sync Static Files to S3
-        if: steps.check_s3.outputs.exists == 'true'
         run: |
-          aws s3 sync ./s3_files s3://${{ needs.terraform.outputs.s3_bucket }} --delete
+          BUCKET=${{ needs.terraform.outputs.s3_bucket }}
+          echo "Syncing files to bucket: $BUCKET"
+          aws s3 sync ./s3_files s3://$BUCKET --delete
 
       - name: Invalidate CloudFront Cache
         run: |
+          DISTRIBUTION_ID=${{ needs.terraform.outputs.cloudfront_id }}
+          echo "Invalidating CloudFront distribution: $DISTRIBUTION_ID"
           aws cloudfront create-invalidation \
-            --distribution-id ${{ needs.terraform.outputs.cloudfront_id }} \
+            --distribution-id $DISTRIBUTION_ID \
             --paths "/*"
 
   # ------------------------------
@@ -96,12 +89,15 @@ jobs:
     name: Deploy Lambda Function
     runs-on: ubuntu-latest
     needs: terraform
+    permissions:
+      id-token: write
+      contents: read
 
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Configure AWS Credentials
+      - name: Configure AWS Credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
@@ -113,18 +109,10 @@ jobs:
           zip -r ../lambda.zip .
           cd ..
 
-      - name: Check if Lambda Exists
-        id: check_lambda
-        run: |
-          if aws lambda get-function --function-name ${{ needs.terraform.outputs.lambda_name }} >/dev/null 2>&1; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
-
       - name: Update Lambda Code
-        if: steps.check_lambda.outputs.exists == 'true'
         run: |
+          LAMBDA_NAME=${{ needs.terraform.outputs.lambda_name }}
+          echo "Updating Lambda function: $LAMBDA_NAME"
           aws lambda update-function-code \
-            --function-name ${{ needs.terraform.outputs.lambda_name }} \
+            --function-name $LAMBDA_NAME \
             --zip-file fileb://lambda.zip
