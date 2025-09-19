@@ -14,10 +14,6 @@ jobs:
     name: Provision Infrastructure
     runs-on: ubuntu-latest
 
-    outputs:
-      s3_bucket: ${{ steps.tf-output.outputs.s3_bucket }}
-      lambda_name: ${{ steps.tf-output.outputs.lambda_name }}
-
     steps:
       - uses: actions/checkout@v4
 
@@ -30,48 +26,9 @@ jobs:
         with:
           terraform_version: 1.7.5
 
-      - name: Terraform Init
-        run: terraform init -input=false
-
-      - name: Terraform Validate
-        run: terraform validate
-
-      - name: Import Existing Resources
-        run: |
-          echo "Checking S3 bucket..."
-          if aws s3api head-bucket --bucket ${{ vars.s3_bucket_name }} 2>/dev/null; then
-            echo "S3 bucket exists. Importing..."
-            terraform import aws_s3_bucket.frontend "${{ vars.s3_bucket_name }}" || echo "Already imported"
-          fi
-
-          echo "Checking DynamoDB table..."
-          if aws dynamodb describe-table --table-name ${{ vars.dynamodb_table_name }} 2>/dev/null; then
-            echo "DynamoDB table exists. Importing..."
-            terraform import aws_dynamodb_table.users "${{ vars.dynamodb_table_name }}" || echo "Already imported"
-          fi
-
-          echo "Checking IAM role..."
-          if aws iam get-role --role-name lambda_exec_role 2>/dev/null; then
-            echo "IAM role exists. Importing..."
-            terraform import aws_iam_role.lambda_exec "lambda_exec_role" || echo "Already imported"
-          fi
-
-          echo "Checking Lambda function..."
-          if aws lambda get-function --function-name ${{ vars.lambda_function_name }} 2>/dev/null; then
-            echo "Lambda exists. Importing..."
-            terraform import aws_lambda_function.backend "${{ vars.lambda_function_name }}" || echo "Already imported"
-          fi
-
-      - name: Terraform Plan
-        run: terraform plan -input=false
-
-      - name: Terraform Apply
-        run: terraform apply -auto-approve -input=false
-
-      - id: tf-output
-        run: |
-          echo "s3_bucket=$(terraform output -raw s3_bucket_name)" >> $GITHUB_OUTPUT
-          echo "lambda_name=$(terraform output -raw lambda_function_name)" >> $GITHUB_OUTPUT
+      - run: terraform init
+      - run: terraform validate
+      - run: terraform apply -auto-approve
 
   frontend:
     name: Deploy Frontend
@@ -86,10 +43,8 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
           aws-region: us-east-1
 
-      - name: Sync Frontend Files
-        run: |
-          BUCKET=${{ needs.terraform.outputs.s3_bucket }}
-          aws s3 sync ./s3_files s3://$BUCKET --delete
+      - run: |
+          aws s3 sync ./s3_files s3://luffy-utrains-5000e --delete
 
   backend:
     name: Deploy Lambda
@@ -104,11 +59,10 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
           aws-region: us-east-1
 
-      - name: Deploy Lambda Code
-        run: |
+      - run: |
           cd lambda
           zip -r ../lambda.zip .
           cd ..
           aws lambda update-function-code \
-            --function-name ${{ needs.terraform.outputs.lambda_name }} \
+            --function-name userserverless-lambda \
             --zip-file fileb://lambda.zip
