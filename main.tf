@@ -39,13 +39,16 @@ resource "aws_s3_bucket_ownership_controls" "frontend" {
 resource "aws_s3_bucket_public_access_block" "frontend" {
   bucket                  = aws_s3_bucket.frontend.id
   block_public_acls       = false
-  block_public_policy     = false
+  block_public_policy     = false   # ensure bucket can have public policy
   ignore_public_acls      = false
   restrict_public_buckets = false
 }
 
 resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
+
+  depends_on = [aws_s3_bucket_public_access_block.frontend]
+
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
@@ -193,3 +196,4 @@ resource "aws_apigatewayv2_stage" "default" {
   name        = "$default"
   auto_deploy = true
 }
+
