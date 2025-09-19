@@ -39,16 +39,13 @@ resource "aws_s3_bucket_ownership_controls" "frontend" {
 resource "aws_s3_bucket_public_access_block" "frontend" {
   bucket                  = aws_s3_bucket.frontend.id
   block_public_acls       = false
-  block_public_policy     = false   # ensure bucket can have public policy
+  block_public_policy     = false
   ignore_public_acls      = false
   restrict_public_buckets = false
 }
 
 resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
-
-  depends_on = [aws_s3_bucket_public_access_block.frontend]
-
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
@@ -68,10 +65,10 @@ resource "aws_s3_bucket_policy" "frontend" {
 resource "aws_s3_object" "frontend_files" {
   for_each = fileset("${path.module}/s3_files", "*")
 
-  bucket       = aws_s3_bucket.frontend.id
-  key          = each.value
-  source       = "${path.module}/s3_files/${each.value}"
-  etag         = filemd5("${path.module}/s3_files/${each.value}")
+  bucket = aws_s3_bucket.frontend.id
+  key    = each.value
+  source = "${path.module}/s3_files/${each.value}"
+  etag   = filemd5("${path.module}/s3_files/${each.value}")
   content_type = lookup(
     {
       "html" = "text/html"
@@ -165,6 +162,24 @@ resource "aws_lambda_function" "backend" {
 # -----------------------------
 # API Gateway
 # -----------------------------
+locals {
+  api_resources = {
+    "/health" = ["GET"]
+    "/user"   = ["GET", "PUT", "POST", "DELETE"]
+    "/users"  = ["GET"]
+  }
+
+  # Flatten resources for for_each
+  api_routes_map = merge([
+    for path, methods in local.api_resources : {
+      for method in methods : "${replace(path, "/", "_")}_${method}" => {
+        path   = path
+        method = method
+      }
+    }
+  ]...)
+}
+
 resource "aws_apigatewayv2_api" "http_api" {
   name          = "userserverless-api"
   protocol_type = "HTTP"
@@ -177,18 +192,22 @@ resource "aws_apigatewayv2_integration" "lambda_integration" {
   payload_format_version = "2.0"
 }
 
-resource "aws_apigatewayv2_route" "default" {
+resource "aws_apigatewayv2_route" "lambda_routes" {
+  for_each = local.api_routes_map
+
   api_id    = aws_apigatewayv2_api.http_api.id
-  route_key = "$default"
+  route_key = "${each.value.method} ${each.value.path}"
   target    = "integrations/${aws_apigatewayv2_integration.lambda_integration.id}"
 }
 
 resource "aws_lambda_permission" "apigw" {
-  statement_id  = "AllowAPIGatewayInvoke"
+  for_each = local.api_routes_map
+
+  statement_id  = "AllowAPIGatewayInvoke_${replace(each.key, "/", "_")}"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.backend.function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/*"
+  source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/${each.value.method}${each.value.path}"
 }
 
 resource "aws_apigatewayv2_stage" "default" {
