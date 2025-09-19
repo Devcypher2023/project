@@ -37,18 +37,21 @@ jobs:
 
       - name: Import Existing Resources (if any)
         run: |
+          # Import S3 bucket if exists
           BUCKET="luffy-utrains-5000e"
           if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
             echo "Bucket exists, importing..."
             terraform import aws_s3_bucket.frontend "$BUCKET" || echo "Already imported."
           fi
 
+          # Import DynamoDB table if exists
           TABLE="userserverless"
           if aws dynamodb describe-table --table-name "$TABLE" 2>/dev/null; then
             echo "DynamoDB table exists, importing..."
             terraform import aws_dynamodb_table.users "$TABLE" || echo "Already imported."
           fi
 
+          # Import Lambda role if exists
           ROLE="lambda_exec_role"
           if aws iam get-role --role-name "$ROLE" 2>/dev/null; then
             echo "IAM Role exists, importing..."
@@ -84,12 +87,12 @@ jobs:
 
       - name: Sync Frontend Files to S3
         run: |
-          BUCKET=${{ needs.terraform.outputs.s3_bucket }}
-          if [ -n "$BUCKET" ]; then
-            aws s3 sync ./s3_files s3://$BUCKET --delete
-          else
-            echo "S3 bucket output not found. Skipping frontend deployment."
+          BUCKET="${{ needs.terraform.outputs.s3_bucket }}"
+          if [ -z "$BUCKET" ]; then
+            echo "S3 bucket output not available. Skipping frontend deployment."
+            exit 0
           fi
+          aws s3 sync ./s3_files s3://$BUCKET --delete
 
   backend:
     name: Deploy Lambda
@@ -111,10 +114,11 @@ jobs:
           cd ..
 
       - name: Update or Create Lambda Function
+        shell: bash
         run: |
-          LAMBDA_NAME=${{ needs.terraform.outputs.lambda_name }}
+          LAMBDA_NAME="${{ needs.terraform.outputs.lambda_name || '' }}"
           if [ -z "$LAMBDA_NAME" ]; then
-            echo "Lambda name not available from Terraform output. Skipping."
+            echo "Lambda name not available from Terraform output. Skipping deployment."
             exit 0
           fi
 
@@ -125,4 +129,5 @@ jobs:
               --zip-file fileb://lambda.zip
           else
             echo "Lambda does not exist. Deploy it manually via Terraform."
+            exit 1
           fi
