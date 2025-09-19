@@ -37,13 +37,6 @@ jobs:
 
       - name: Import Existing Resources (if any)
         run: |
-          # Import S3 bucket if exists
-          BUCKET="luffy-utrains-5000e"
-          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
-            echo "Bucket exists, importing..."
-            terraform import aws_s3_bucket.frontend "$BUCKET" || echo "Already imported."
-          fi
-
           # Import DynamoDB table if exists
           TABLE="userserverless"
           if aws dynamodb describe-table --table-name "$TABLE" 2>/dev/null; then
@@ -58,6 +51,13 @@ jobs:
             terraform import aws_iam_role.lambda_exec "$ROLE" || echo "Already imported."
           fi
 
+          # Import S3 bucket if exists
+          BUCKET="luffy-utrains-5000e"
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "Bucket exists, importing..."
+            terraform import aws_s3_bucket.frontend "$BUCKET" || echo "Already imported."
+          fi
+
       - name: Terraform Apply
         run: |
           set -e
@@ -69,36 +69,13 @@ jobs:
 
       - id: tf-output
         run: |
-          # Safely get Terraform outputs; skip if missing
           S3_BUCKET=$(terraform output -raw s3_bucket_name || echo "")
           LAMBDA_NAME=$(terraform output -raw lambda_function_name || echo "")
           echo "s3_bucket=$S3_BUCKET" >> $GITHUB_OUTPUT
           echo "lambda_name=$LAMBDA_NAME" >> $GITHUB_OUTPUT
 
-  frontend:
-    name: Deploy Frontend
-    runs-on: ubuntu-latest
-    needs: terraform
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
-          aws-region: us-east-1
-
-      - name: Sync Frontend Files to S3
-        run: |
-          BUCKET=${{ needs.terraform.outputs.s3_bucket }}
-          if [ -n "$BUCKET" ]; then
-            aws s3 sync ./s3_files s3://$BUCKET --delete
-          else
-            echo "S3 bucket not available. Skipping frontend deploy."
-          fi
-
   backend:
-    name: Deploy Lambda
+    name: Deploy Backend (Lambda & API)
     runs-on: ubuntu-latest
     needs: terraform
 
@@ -133,3 +110,25 @@ jobs:
           else
             echo "Lambda does not exist. Deploy it manually via Terraform."
             exit 1
+
+  frontend:
+    name: Deploy Frontend (S3)
+    runs-on: ubuntu-latest
+    needs: backend  # <-- frontend now waits for backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ACTION_ROLE }}
+          aws-region: us-east-1
+
+      - name: Sync Frontend Files to S3
+        run: |
+          BUCKET=${{ needs.terraform.outputs.s3_bucket }}
+          if [ -n "$BUCKET" ]; then
+            aws s3 sync ./s3_files s3://$BUCKET --delete
+          else
+            echo "S3 bucket not available. Skipping frontend deploy."
+          fi
