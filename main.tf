@@ -27,20 +27,13 @@ resource "aws_s3_bucket" "frontend" {
 resource "aws_s3_bucket_website_configuration" "frontend" {
   bucket = aws_s3_bucket.frontend.id
 
-  index_document {
-    suffix = "index.html"
-  }
-  error_document {
-    key = "index.html"
-  }
+  index_document { suffix = "index.html" }
+  error_document { key = "index.html" }
 }
 
 resource "aws_s3_bucket_ownership_controls" "frontend" {
   bucket = aws_s3_bucket.frontend.id
-
-  rule {
-    object_ownership = "BucketOwnerPreferred"
-  }
+  rule { object_ownership = "BucketOwnerPreferred" }
 }
 
 resource "aws_s3_bucket_public_access_block" "frontend" {
@@ -55,15 +48,13 @@ resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
   policy = jsonencode({
     Version = "2012-10-17",
-    Statement = [
-      {
-        Sid       = "PublicReadGetObject"
-        Effect    = "Allow"
-        Principal = "*"
-        Action    = ["s3:GetObject"]
-        Resource  = "${aws_s3_bucket.frontend.arn}/*"
-      }
-    ]
+    Statement = [{
+      Sid       = "PublicReadGetObject"
+      Effect    = "Allow"
+      Principal = "*"
+      Action    = ["s3:GetObject"]
+      Resource  = "${aws_s3_bucket.frontend.arn}/*"
+    }]
   })
 
   lifecycle {
@@ -119,18 +110,13 @@ resource "aws_dynamodb_table" "users" {
 # -----------------------------
 resource "aws_iam_role" "lambda_exec" {
   name = "lambda_exec_role"
-
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
-    Statement = [
-      {
-        Action    = "sts:AssumeRole"
-        Principal = {
-          Service = "lambda.amazonaws.com"
-        }
-        Effect = "Allow"
-      }
-    ]
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Principal = { Service = "lambda.amazonaws.com" }
+      Effect    = "Allow"
+    }]
   })
 
   lifecycle {
@@ -173,12 +159,15 @@ resource "aws_lambda_function" "backend" {
 
   lifecycle {
     prevent_destroy = true
-    ignore_changes  = [filename, source_code_hash]
+    ignore_changes  = [
+      filename,
+      source_code_hash
+    ]
   }
 }
 
 # -----------------------------
-# API Gateway (Flattened Routes)
+# API Gateway (Flattened for_each)
 # -----------------------------
 locals {
   api_resources = {
@@ -187,13 +176,22 @@ locals {
     "/users"  = ["GET"]
   }
 
-  # Flatten into a single map with setproduct
+  # ✅ Generate a flat list first, then map (avoids nested for in {})
+  api_routes_list = flatten([
+    for path, methods in local.api_resources : [
+      for method in methods : {
+        key    = "${replace(path, "/", "_")}_${method}"
+        path   = path
+        method = method
+      }
+    ]
+  ])
+
   api_routes_map = {
-    for combo in setproduct(keys(local.api_resources), flatten([for v in values(local.api_resources) : v])) :
-    "${replace(combo[0], "/", "_")}_${combo[1]}" => {
-      path   = combo[0]
-      method = combo[1]
-    } if contains(local.api_resources[combo[0]], combo[1])
+    for r in local.api_routes_list : r.key => {
+      path   = r.path
+      method = r.method
+    }
   }
 }
 
@@ -220,7 +218,7 @@ resource "aws_apigatewayv2_route" "lambda_routes" {
 resource "aws_lambda_permission" "apigw" {
   for_each = local.api_routes_map
 
-  statement_id  = "AllowAPIGatewayInvoke_${replace(each.key, "/", "_")}"
+  statement_id  = "AllowAPIGatewayInvoke_${each.key}"
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.backend.function_name
   principal     = "apigateway.amazonaws.com"
