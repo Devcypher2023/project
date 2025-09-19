@@ -9,14 +9,14 @@ terraform {
 }
 
 provider "aws" {
-  region = "us-east-1"
+  region = var.aws_region
 }
 
 # -----------------------------
 # S3 Bucket for Static Website
 # -----------------------------
 resource "aws_s3_bucket" "frontend" {
-  bucket = "luffy-utrains-5000e"
+  bucket = var.s3_bucket_name
 
   lifecycle {
     prevent_destroy = true
@@ -26,6 +26,7 @@ resource "aws_s3_bucket" "frontend" {
 
 resource "aws_s3_bucket_website_configuration" "frontend" {
   bucket = aws_s3_bucket.frontend.id
+
   index_document { suffix = "index.html" }
   error_document { key = "index.html" }
 }
@@ -38,13 +39,16 @@ resource "aws_s3_bucket_ownership_controls" "frontend" {
 resource "aws_s3_bucket_public_access_block" "frontend" {
   bucket                  = aws_s3_bucket.frontend.id
   block_public_acls       = false
-  block_public_policy     = false  # allows public policy
+  block_public_policy     = false   # ensure bucket can have public policy
   ignore_public_acls      = false
   restrict_public_buckets = false
 }
 
 resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
+
+  depends_on = [aws_s3_bucket_public_access_block.frontend]
+
   policy = jsonencode({
     Version = "2012-10-17",
     Statement = [{
@@ -90,7 +94,7 @@ resource "aws_s3_object" "frontend_files" {
 # DynamoDB Table
 # -----------------------------
 resource "aws_dynamodb_table" "users" {
-  name         = "userserverless"
+  name         = var.dynamodb_table_name
   billing_mode = "PAY_PER_REQUEST"
   hash_key     = "id"
 
@@ -141,7 +145,7 @@ data "archive_file" "lambda_zip" {
 }
 
 resource "aws_lambda_function" "backend" {
-  function_name    = "userserverless-lambda"
+  function_name    = var.lambda_function_name
   role             = aws_iam_role.lambda_exec.arn
   handler          = "lambda_function.lambda_handler"
   runtime          = "python3.11"
@@ -192,5 +196,3 @@ resource "aws_apigatewayv2_stage" "default" {
   name        = "$default"
   auto_deploy = true
 }
-
-
