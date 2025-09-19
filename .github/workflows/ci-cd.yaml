@@ -69,8 +69,11 @@ jobs:
 
       - id: tf-output
         run: |
-          echo "s3_bucket=$(terraform output -raw s3_bucket_name || echo '')" >> $GITHUB_OUTPUT
-          echo "lambda_name=$(terraform output -raw lambda_function_name || echo '')" >> $GITHUB_OUTPUT
+          # Safely get Terraform outputs; skip if missing
+          S3_BUCKET=$(terraform output -raw s3_bucket_name || echo "")
+          LAMBDA_NAME=$(terraform output -raw lambda_function_name || echo "")
+          echo "s3_bucket=$S3_BUCKET" >> $GITHUB_OUTPUT
+          echo "lambda_name=$LAMBDA_NAME" >> $GITHUB_OUTPUT
 
   frontend:
     name: Deploy Frontend
@@ -87,12 +90,12 @@ jobs:
 
       - name: Sync Frontend Files to S3
         run: |
-          BUCKET="${{ needs.terraform.outputs.s3_bucket }}"
-          if [ -z "$BUCKET" ]; then
-            echo "S3 bucket output not available. Skipping frontend deployment."
-            exit 0
+          BUCKET=${{ needs.terraform.outputs.s3_bucket }}
+          if [ -n "$BUCKET" ]; then
+            aws s3 sync ./s3_files s3://$BUCKET --delete
+          else
+            echo "S3 bucket not available. Skipping frontend deploy."
           fi
-          aws s3 sync ./s3_files s3://$BUCKET --delete
 
   backend:
     name: Deploy Lambda
@@ -117,7 +120,7 @@ jobs:
         shell: bash
         run: |
           LAMBDA_NAME="${{ needs.terraform.outputs.lambda_name || '' }}"
-          if [ -z "$LAMBDA_NAME" ]; then
+          if [ -z "$LAMBDA_NAME" ] || [[ "$LAMBDA_NAME" == *"error"* ]]; then
             echo "Lambda name not available from Terraform output. Skipping deployment."
             exit 0
           fi
@@ -130,4 +133,3 @@ jobs:
           else
             echo "Lambda does not exist. Deploy it manually via Terraform."
             exit 1
-          fi
