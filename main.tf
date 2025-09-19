@@ -27,13 +27,20 @@ resource "aws_s3_bucket" "frontend" {
 resource "aws_s3_bucket_website_configuration" "frontend" {
   bucket = aws_s3_bucket.frontend.id
 
-  index_document { suffix = "index.html" }
-  error_document { key = "index.html" }
+  index_document {
+    suffix = "index.html"
+  }
+  error_document {
+    key = "index.html"
+  }
 }
 
 resource "aws_s3_bucket_ownership_controls" "frontend" {
   bucket = aws_s3_bucket.frontend.id
-  rule { object_ownership = "BucketOwnerPreferred" }
+
+  rule {
+    object_ownership = "BucketOwnerPreferred"
+  }
 }
 
 resource "aws_s3_bucket_public_access_block" "frontend" {
@@ -48,13 +55,15 @@ resource "aws_s3_bucket_policy" "frontend" {
   bucket = aws_s3_bucket.frontend.id
   policy = jsonencode({
     Version = "2012-10-17",
-    Statement = [{
-      Sid       = "PublicReadGetObject"
-      Effect    = "Allow"
-      Principal = "*"
-      Action    = ["s3:GetObject"]
-      Resource  = "${aws_s3_bucket.frontend.arn}/*"
-    }]
+    Statement = [
+      {
+        Sid       = "PublicReadGetObject"
+        Effect    = "Allow"
+        Principal = "*"
+        Action    = ["s3:GetObject"]
+        Resource  = "${aws_s3_bucket.frontend.arn}/*"
+      }
+    ]
   })
 
   lifecycle {
@@ -65,10 +74,10 @@ resource "aws_s3_bucket_policy" "frontend" {
 resource "aws_s3_object" "frontend_files" {
   for_each = fileset("${path.module}/s3_files", "*")
 
-  bucket = aws_s3_bucket.frontend.id
-  key    = each.value
-  source = "${path.module}/s3_files/${each.value}"
-  etag   = filemd5("${path.module}/s3_files/${each.value}")
+  bucket       = aws_s3_bucket.frontend.id
+  key          = each.value
+  source       = "${path.module}/s3_files/${each.value}"
+  etag         = filemd5("${path.module}/s3_files/${each.value}")
   content_type = lookup(
     {
       "html" = "text/html"
@@ -110,16 +119,23 @@ resource "aws_dynamodb_table" "users" {
 # -----------------------------
 resource "aws_iam_role" "lambda_exec" {
   name = "lambda_exec_role"
+
   assume_role_policy = jsonencode({
     Version = "2012-10-17",
-    Statement = [{
-      Action    = "sts:AssumeRole"
-      Principal = { Service = "lambda.amazonaws.com" }
-      Effect    = "Allow"
-    }]
+    Statement = [
+      {
+        Action    = "sts:AssumeRole"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+        Effect = "Allow"
+      }
+    ]
   })
 
-  lifecycle { prevent_destroy = true }
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_iam_role_policy_attachment" "lambda_basic" {
@@ -150,7 +166,9 @@ resource "aws_lambda_function" "backend" {
   source_code_hash = filebase64sha256(data.archive_file.lambda_zip.output_path)
 
   environment {
-    variables = { DYNAMODB_TABLE = aws_dynamodb_table.users.name }
+    variables = {
+      DYNAMODB_TABLE = aws_dynamodb_table.users.name
+    }
   }
 
   lifecycle {
@@ -160,7 +178,7 @@ resource "aws_lambda_function" "backend" {
 }
 
 # -----------------------------
-# API Gateway
+# API Gateway (Flattened Routes)
 # -----------------------------
 locals {
   api_resources = {
@@ -169,15 +187,14 @@ locals {
     "/users"  = ["GET"]
   }
 
-  # Flatten resources for for_each
-  api_routes_map = merge([
-    for path, methods in local.api_resources : {
-      for method in methods : "${replace(path, "/", "_")}_${method}" => {
-        path   = path
-        method = method
-      }
-    }
-  ]...)
+  # Flatten into a single map with setproduct
+  api_routes_map = {
+    for combo in setproduct(keys(local.api_resources), flatten([for v in values(local.api_resources) : v])) :
+    "${replace(combo[0], "/", "_")}_${combo[1]}" => {
+      path   = combo[0]
+      method = combo[1]
+    } if contains(local.api_resources[combo[0]], combo[1])
+  }
 }
 
 resource "aws_apigatewayv2_api" "http_api" {
@@ -207,7 +224,7 @@ resource "aws_lambda_permission" "apigw" {
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.backend.function_name
   principal     = "apigateway.amazonaws.com"
-  source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/${each.value.method}${each.value.path}"
+  source_arn    = "${aws_apigatewayv2_api.http_api.execution_arn}/*/${each.value.method}"
 }
 
 resource "aws_apigatewayv2_stage" "default" {
